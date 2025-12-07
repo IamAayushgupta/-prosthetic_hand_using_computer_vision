@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Hand Gesture → ESP32 Control</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #050816;
+      color: #e5e7eb;
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+      align-items: center;
+      justify-content: flex-start;
+      padding: 16px;
+      box-sizing: border-box;
+    }
+
+    h1 {
+      margin: 8px 0 4px;
+      text-align: center;
+    }
+
+    p {
+      margin: 0 0 12px;
+      text-align: center;
+      max-width: 600px;
+      color: #9ca3af;
+      font-size: 0.95rem;
+    }
+
+    .card {
+      background: #0b1020;
+      border-radius: 16px;
+      padding: 16px;
+      margin-top: 12px;
+      box-shadow: 0 18px 40px rgba(0,0,0,0.5);
+      width: 100%;
+      max-width: 900px;
+      box-sizing: border-box;
+      border: 1px solid rgba(148,163,184,0.3);
+    }
+
+    .video-wrapper {
+      position: relative;
+      width: 100%;
+      padding-top: 56.25%; /* 16:9 ratio */
+      border-radius: 12px;
+      overflow: hidden;
+      background: radial-gradient(circle at top, #1e293b 0, #020617 60%);
+    }
+
+    video, canvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .status-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 12px;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 0.9rem;
+    }
+
+    .chip {
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: rgba(15,23,42,0.9);
+      border: 1px solid rgba(148,163,184,0.4);
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      white-space: nowrap;
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: #f97316;
+      box-shadow: 0 0 6px #f97316;
+    }
+
+    .dot.ok {
+      background: #22c55e;
+      box-shadow: 0 0 6px #22c55e;
+    }
+
+    .dot.bad {
+      background: #ef4444;
+      box-shadow: 0 0 6px #ef4444;
+    }
+
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 10px;
+      align-items: center;
+    }
+
+    label {
+      font-size: 0.85rem;
+      color: #9ca3af;
+    }
+
+    input[type="text"] {
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(148,163,184,0.6);
+      background: #020617;
+      color: #e5e7eb;
+      outline: none;
+      min-width: 180px;
+    }
+
+    input[type="text"]::placeholder {
+      color: #6b7280;
+    }
+
+    .binary-display {
+      font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 1.4rem;
+      letter-spacing: 0.12em;
+      padding: 6px 12px;
+      border-radius: 999px;
+      background: rgba(15,23,42,0.9);
+      border: 1px solid rgba(148,163,184,0.4);
+      min-width: 140px;
+      text-align: center;
+    }
+
+    button {
+      border-radius: 999px;
+      border: none;
+      padding: 6px 12px;
+      background: linear-gradient(135deg, #6366f1, #22c55e);
+      color: white;
+      font-size: 0.85rem;
+      cursor: pointer;
+    }
+
+    button:disabled {
+      opacity: 0.5;
+      cursor: default;
+    }
+
+    .small {
+      font-size: 0.8rem;
+      color: #6b7280;
+      margin-top: 4px;
+    }
+  </style>
+
+  <!-- MediaPipe JS libs from jsDelivr CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils@0.3/drawing_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/hands.js" crossorigin="anonymous"></script>
+</head>
+<body>
+  <h1>Hand Gesture → ESP32</h1>
+  <p>
+    Show your hand to the webcam. The site will detect finger states (Thumb–Pinky),
+    build a 5-bit binary string like <code>10110</code>, and send it to your ESP32.
+  </p>
+
+  <div class="card">
+    <div class="video-wrapper">
+      <video class="input_video" playsinline></video>
+      <canvas class="output_canvas"></canvas>
+    </div>
+
+    <div class="status-bar">
+      <div class="chip">
+        <span class="dot" id="camera-dot"></span>
+        <span id="camera-status">Camera: initializing…</span>
+      </div>
+
+      <div class="chip">
+        <span class="dot" id="hand-dot"></span>
+        <span>Hand: <span id="hand-status">Not detected</span></span>
+      </div>
+
+      <div class="chip">
+        <span>Finger States:</span>
+        <span class="binary-display" id="binary-display">00000</span>
+      </div>
+    </div>
+
+    <div class="controls">
+      <label>
+        ESP32 IP:
+        <input
+          type="text"
+          id="esp32-ip"
+          placeholder="10.37.200.127"
+          value=""
+        />
+      </label>
+
+      <button id="test-btn" type="button">Test send (10110)</button>
+
+      <span class="small" id="esp32-status">
+        Tip: ESP32 must be on the same Wi-Fi as this device. Your ESP32 endpoint
+        should handle <code>/gesture?state=XXXXX</code>.
+      </span>
+    </div>
+  </div>
+
+  <script>
+    const videoElement = document.querySelector('.input_video');
+    const canvasElement = document.querySelector('.output_canvas');
+    const canvasCtx = canvasElement.getContext('2d');
+
+    const cameraDot = document.getElementById('camera-dot');
+    const cameraStatus = document.getElementById('camera-status');
+    const handDot = document.getElementById('hand-dot');
+    const handStatus = document.getElementById('hand-status');
+    const binaryDisplay = document.getElementById('binary-display');
+    const esp32Status = document.getElementById('esp32-status');
+    const testBtn = document.getElementById('test-btn');
+
+    let lastSentState = null;
+    let lastSentTime = 0;
+    const MIN_INTERVAL_MS = 200; // debounce network calls
+
+    function setCameraState(ok, msg) {
+      cameraStatus.textContent = msg;
+      cameraDot.classList.remove('ok', 'bad');
+      if (ok === true) cameraDot.classList.add('ok');
+      else if (ok === false) cameraDot.classList.add('bad');
+    }
+
+    function setHandState(hasHand) {
+      handDot.classList.remove('ok', 'bad');
+      if (hasHand) {
+        handDot.classList.add('ok');
+        handStatus.textContent = 'Detected';
+      } else {
+        handDot.classList.add('bad');
+        handStatus.textContent = 'Not detected';
+      }
+    }
+
+    // === Finger state logic (Python-equivalent, with handedness) ===
+    function getFingerStates(landmarks, handednessLabel = "Right") {
+      const fingerStates = [];
+
+      // Thumb: compare x coordinates (tip vs base joint)
+      // For Right hand (selfie mode), open if tip.x < base.x
+      // For Left hand, the comparison flips
+      const isRight = handednessLabel.toLowerCase() === "right";
+      const tip4 = landmarks[4].x;
+      const pip3 = landmarks[3].x;
+
+      if (isRight) {
+        fingerStates.push(tip4 < pip3 ? 1 : 0);
+      } else {
+        fingerStates.push(tip4 > pip3 ? 1 : 0);
+      }
+
+      // Other fingers: compare y coordinates (tip vs pip)
+      const fingers = [
+        [8, 6],   // Index
+        [12, 10], // Middle
+        [16, 14], // Ring
+        [20, 18]  // Pinky
+      ];
+
+      for (const [tip, pip] of fingers) {
+        const tipY = landmarks[tip].y;
+        const pipY = landmarks[pip].y;
+        fingerStates.push(tipY < pipY ? 1 : 0);
+      }
+
+      return fingerStates;
+    }
+
+    async function sendGestureToESP32(binaryString) {
+      const ip = document.getElementById('esp32-ip').value.trim();
+      if (!ip) {
+        esp32Status.textContent = 'Set ESP32 IP first.';
+        return;
+      }
+
+      const now = Date.now();
+      if (binaryString === lastSentState && now - lastSentTime < MIN_INTERVAL_MS) {
+        return;
+      }
+
+      const url = `http://${ip}/gesture?state=${binaryString}`;
+
+      try {
+        await fetch(url, { method: 'GET' });
+        esp32Status.textContent = `Sent: ${binaryString} → ${url}`;
+        lastSentState = binaryString;
+        lastSentTime = now;
+      } catch (err) {
+        console.error('Error sending to ESP32:', err);
+        esp32Status.textContent = 'Error talking to ESP32 (check IP / Wi-Fi / CORS).';
+      }
+    }
+
+    testBtn.addEventListener('click', () => {
+      sendGestureToESP32('10110');
+    });
+
+    function onResults(results) {
+      // Ensure canvas has size
+      canvasElement.width = canvasElement.clientWidth || 960;
+      canvasElement.height = canvasElement.clientHeight || 540;
+
+      canvasCtx.save();
+      canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+      canvasCtx.drawImage(
+        results.image, 0, 0, canvasElement.width, canvasElement.height
+      );
+
+      if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+        setHandState(true);
+
+        for (let i = 0; i < results.multiHandLandmarks.length; i++) {
+          const landmarks = results.multiHandLandmarks[i];
+
+          // Read handedness from MediaPipe (Left / Right)
+          let handednessLabel = "Right";
+          if (
+            results.multiHandedness &&
+            results.multiHandedness[i] &&
+            results.multiHandedness[i].label
+          ) {
+            handednessLabel = results.multiHandedness[i].label;
+          }
+
+          // Draw landmarks
+          drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS,
+            { color: '#22c55e', lineWidth: 3 });
+          drawLandmarks(canvasCtx, landmarks,
+            { color: '#f97316', lineWidth: 1 });
+
+          // Compute finger states
+          const states = getFingerStates(landmarks, handednessLabel);
+          const binaryString = states.join('');
+          binaryDisplay.textContent = binaryString;
+
+          // Debug if you want:
+          // console.log("Hand:", handednessLabel, "states:", states, "binary:", binaryString);
+
+          // Send to ESP32 (debounced)
+          sendGestureToESP32(binaryString);
+        }
+      } else {
+        setHandState(false);
+        binaryDisplay.textContent = '00000';
+      }
+
+      canvasCtx.restore();
+    }
+
+    // === Setup MediaPipe Hands ===
+    const hands = new Hands({
+      locateFile: (file) => {
+        return `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/${file}`;
+      }
+    });
+
+    hands.setOptions({
+      selfieMode: true,
+      maxNumHands: 1,
+      modelComplexity: 1,
+      minDetectionConfidence: 0.7,
+      minTrackingConfidence: 0.7
+    });
+
+    hands.onResults(onResults);
+
+    // === Setup camera ===
+    const camera = new Camera(videoElement, {
+      onFrame: async () => {
+        await hands.send({ image: videoElement });
+      },
+      width: 960,
+      height: 540
+    });
+
+    navigator.mediaDevices.getUserMedia({ video: true })
+      .then(stream => {
+        setCameraState(true, 'Camera: OK');
+        stream.getTracks().forEach(track => track.stop()); // just to confirm access
+        camera.start();
+      })
+      .catch(err => {
+        console.error('Camera error', err);
+        setCameraState(false, 'Camera: permission denied or not available');
+      });
+  </script>
+</body>
+</html>
