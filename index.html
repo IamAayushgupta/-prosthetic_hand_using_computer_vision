@@ -15,13 +15,14 @@
       min-height: 100vh;
       align-items: center;
       justify-content: flex-start;
-      padding: 16px;
+      padding: 12px;
       box-sizing: border-box;
     }
 
     h1 {
       margin: 8px 0 4px;
       text-align: center;
+      font-size: clamp(1.3rem, 4vw, 1.7rem);
     }
 
     p {
@@ -35,7 +36,7 @@
     .card {
       background: #0b1020;
       border-radius: 16px;
-      padding: 16px;
+      padding: 12px;
       margin-top: 12px;
       box-shadow: 0 18px 40px rgba(0,0,0,0.5);
       width: 100%;
@@ -44,21 +45,24 @@
       border: 1px solid rgba(148,163,184,0.3);
     }
 
+    /* Responsive video container */
     .video-wrapper {
       position: relative;
       width: 100%;
-      padding-top: 56.25%; /* 16:9 ratio */
+      max-width: 100%;
+      aspect-ratio: 16 / 9; /* keeps shape on all screens */
       border-radius: 12px;
       overflow: hidden;
       background: radial-gradient(circle at top, #1e293b 0, #020617 60%);
     }
 
-    video, canvas {
+    video,
+    canvas {
       position: absolute;
       inset: 0;
       width: 100%;
       height: 100%;
-      object-fit: cover;
+      object-fit: contain; /* no stretching on small screens */
     }
 
     .status-bar {
@@ -120,7 +124,7 @@
       background: #020617;
       color: #e5e7eb;
       outline: none;
-      min-width: 180px;
+      min-width: 160px;
     }
 
     input[type="text"]::placeholder {
@@ -159,6 +163,15 @@
       color: #6b7280;
       margin-top: 4px;
     }
+
+    @media (max-width: 600px) {
+      .status-bar {
+        justify-content: center;
+      }
+      .card {
+        padding: 10px;
+      }
+    }
   </style>
 
   <!-- MediaPipe JS libs from jsDelivr CDN -->
@@ -170,7 +183,8 @@
   <h1>Hand Gesture → ESP32</h1>
   <p>
     Show your hand to the webcam. The site will detect finger states (Thumb–Pinky),
-    build a 5-bit binary string like <code>10110</code>, and send it to your ESP32.
+    build a 5-bit binary string like <code>10110</code>, and send it to your ESP32
+    at <code>/gesture?state=XXXXX</code>.
   </p>
 
   <div class="card">
@@ -202,7 +216,7 @@
         <input
           type="text"
           id="esp32-ip"
-          placeholder="10.37.200.127"
+          placeholder="192.168.x.x"
           value=""
         />
       </label>
@@ -315,15 +329,16 @@
     });
 
     function onResults(results) {
-      // Ensure canvas has size
-      canvasElement.width = canvasElement.clientWidth || 960;
-      canvasElement.height = canvasElement.clientHeight || 540;
+      // Use the real video resolution to avoid distortion
+      const vw = videoElement.videoWidth || 960;
+      const vh = videoElement.videoHeight || 540;
+
+      canvasElement.width = vw;
+      canvasElement.height = vh;
 
       canvasCtx.save();
       canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-      canvasCtx.drawImage(
-        results.image, 0, 0, canvasElement.width, canvasElement.height
-      );
+      canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
 
       if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
         setHandState(true);
@@ -351,9 +366,6 @@
           const states = getFingerStates(landmarks, handednessLabel);
           const binaryString = states.join('');
           binaryDisplay.textContent = binaryString;
-
-          // Debug if you want:
-          // console.log("Hand:", handednessLabel, "states:", states, "binary:", binaryString);
 
           // Send to ESP32 (debounced)
           sendGestureToESP32(binaryString);
