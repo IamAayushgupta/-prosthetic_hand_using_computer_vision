@@ -183,8 +183,7 @@
   <h1>Hand Gesture → ESP32</h1>
   <p>
     Show your hand to the webcam. The site will detect finger states (Thumb–Pinky),
-    build a 5-bit binary string like <code>10110</code>, and send it to your ESP32
-    at <code>/gesture?state=XXXXX</code>.
+    build a 5-bit binary string like <code>10110</code>, and send it to your ESP32.
   </p>
 
   <div class="card">
@@ -230,190 +229,188 @@
     </div>
   </div>
 
-  <script>
-    const videoElement = document.querySelector('.input_video');
-    const canvasElement = document.querySelector('.output_canvas');
-    const canvasCtx = canvasElement.getContext('2d');
+ <script>
+  const videoElement = document.querySelector('.input_video');
+  const canvasElement = document.querySelector('.output_canvas');
+  const canvasCtx = canvasElement.getContext('2d');
 
-    const cameraDot = document.getElementById('camera-dot');
-    const cameraStatus = document.getElementById('camera-status');
-    const handDot = document.getElementById('hand-dot');
-    const handStatus = document.getElementById('hand-status');
-    const binaryDisplay = document.getElementById('binary-display');
-    const esp32Status = document.getElementById('esp32-status');
-    const testBtn = document.getElementById('test-btn');
+  const cameraDot = document.getElementById('camera-dot');
+  const cameraStatus = document.getElementById('camera-status');
+  const handDot = document.getElementById('hand-dot');
+  const handStatus = document.getElementById('hand-status');
+  const binaryDisplay = document.getElementById('binary-display');
+  const esp32Status = document.getElementById('esp32-status');
+  const testBtn = document.getElementById('test-btn');
 
-    let lastSentState = null;
-    let lastSentTime = 0;
-    const MIN_INTERVAL_MS = 200; // debounce network calls
+  let lastSentState = null;
+  let lastSentTime = 0;
+  const MIN_INTERVAL_MS = 200; // debounce network calls
 
-    function setCameraState(ok, msg) {
-      cameraStatus.textContent = msg;
-      cameraDot.classList.remove('ok', 'bad');
-      if (ok === true) cameraDot.classList.add('ok');
-      else if (ok === false) cameraDot.classList.add('bad');
+  function setCameraState(ok, msg) {
+    cameraStatus.textContent = msg;
+    cameraDot.classList.remove('ok', 'bad');
+    if (ok === true) cameraDot.classList.add('ok');
+    else if (ok === false) cameraDot.classList.add('bad');
+  }
+
+  function setHandState(hasHand) {
+    handDot.classList.remove('ok', 'bad');
+    if (hasHand) {
+      handDot.classList.add('ok');
+      handStatus.textContent = 'Detected';
+    } else {
+      handDot.classList.add('bad');
+      handStatus.textContent = 'Not detected';
+    }
+  }
+
+  // === Finger state logic (Python-equivalent, with handedness) ===
+  function getFingerStates(landmarks, handednessLabel = "Right") {
+    const fingerStates = [];
+
+    // Thumb: compare x coordinates (tip vs base joint)
+    const isRight = handednessLabel.toLowerCase() === "right";
+    const tip4 = landmarks[4].x;
+    const pip3 = landmarks[3].x;
+
+    if (isRight) {
+      fingerStates.push(tip4 < pip3 ? 1 : 0);
+    } else {
+      fingerStates.push(tip4 > pip3 ? 1 : 0);
     }
 
-    function setHandState(hasHand) {
-      handDot.classList.remove('ok', 'bad');
-      if (hasHand) {
-        handDot.classList.add('ok');
-        handStatus.textContent = 'Detected';
-      } else {
-        handDot.classList.add('bad');
-        handStatus.textContent = 'Not detected';
-      }
+    // Other fingers: compare y coordinates (tip vs pip)
+    const fingers = [
+      [8, 6],   // Index
+      [12, 10], // Middle
+      [16, 14], // Ring
+      [20, 18]  // Pinky
+    ];
+
+    for (const [tip, pip] of fingers) {
+      const tipY = landmarks[tip].y;
+      const pipY = landmarks[pip].y;
+      fingerStates.push(tipY < pipY ? 1 : 0);
     }
 
-    // === Finger state logic (Python-equivalent, with handedness) ===
-    function getFingerStates(landmarks, handednessLabel = "Right") {
-      const fingerStates = [];
+    return fingerStates;
+  }
 
-      // Thumb: compare x coordinates (tip vs base joint)
-      // For Right hand (selfie mode), open if tip.x < base.x
-      // For Left hand, the comparison flips
-      const isRight = handednessLabel.toLowerCase() === "right";
-      const tip4 = landmarks[4].x;
-      const pip3 = landmarks[3].x;
-
-      if (isRight) {
-        fingerStates.push(tip4 < pip3 ? 1 : 0);
-      } else {
-        fingerStates.push(tip4 > pip3 ? 1 : 0);
-      }
-
-      // Other fingers: compare y coordinates (tip vs pip)
-      const fingers = [
-        [8, 6],   // Index
-        [12, 10], // Middle
-        [16, 14], // Ring
-        [20, 18]  // Pinky
-      ];
-
-      for (const [tip, pip] of fingers) {
-        const tipY = landmarks[tip].y;
-        const pipY = landmarks[pip].y;
-        fingerStates.push(tipY < pipY ? 1 : 0);
-      }
-
-      return fingerStates;
+  async function sendGestureToESP32(binaryString) {
+    const ip = document.getElementById('esp32-ip').value.trim();
+    if (!ip) {
+      esp32Status.textContent = 'Set ESP32 IP first.';
+      return;
     }
 
-    async function sendGestureToESP32(binaryString) {
-      const ip = document.getElementById('esp32-ip').value.trim();
-      if (!ip) {
-        esp32Status.textContent = 'Set ESP32 IP first.';
-        return;
-      }
-
-      const now = Date.now();
-      if (binaryString === lastSentState && now - lastSentTime < MIN_INTERVAL_MS) {
-        return;
-      }
-
-      const url = `http://${ip}/gesture?state=${binaryString}`;
-
-      try {
-        await fetch(url, { method: 'GET' });
-        esp32Status.textContent = `Sent: ${binaryString} → ${url}`;
-        lastSentState = binaryString;
-        lastSentTime = now;
-      } catch (err) {
-        console.error('Error sending to ESP32:', err);
-        esp32Status.textContent = 'Error talking to ESP32 (check IP / Wi-Fi / CORS).';
-      }
+    const now = Date.now();
+    if (binaryString === lastSentState && now - lastSentTime < MIN_INTERVAL_MS) {
+      return;
     }
 
-    testBtn.addEventListener('click', () => {
-      sendGestureToESP32('10110');
-    });
+    const url = `http://${ip}/gesture?state=${binaryString}`;
 
-    function onResults(results) {
-      // Use the real video resolution to avoid distortion
-      const vw = videoElement.videoWidth || 960;
-      const vh = videoElement.videoHeight || 540;
+    try {
+      await fetch(url, { method: 'GET' });
+      esp32Status.textContent = `Sent: ${binaryString} → ${url}`;
+      lastSentState = binaryString;
+      lastSentTime = now;
+    } catch (err) {
+      console.error('Error sending to ESP32:', err);
+      esp32Status.textContent = 'Error talking to ESP32 (check IP / Wi-Fi / CORS).';
+    }
+  }
 
-      canvasElement.width = vw;
-      canvasElement.height = vh;
+  testBtn.addEventListener('click', () => {
+    sendGestureToESP32('10110');
+  });
 
-      canvasCtx.save();
-      canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-      canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+  function onResults(results) {
+    // Use the real video resolution to avoid distortion
+    const vw = videoElement.videoWidth || 960;
+    const vh = videoElement.videoHeight || 540;
 
-      if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-        setHandState(true);
+    canvasElement.width = vw;
+    canvasElement.height = vh;
 
-        for (let i = 0; i < results.multiHandLandmarks.length; i++) {
-          const landmarks = results.multiHandLandmarks[i];
+    canvasCtx.save();
+    canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+    canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
 
-          // Read handedness from MediaPipe (Left / Right)
-          let handednessLabel = "Right";
-          if (
-            results.multiHandedness &&
-            results.multiHandedness[i] &&
-            results.multiHandedness[i].label
-          ) {
-            handednessLabel = results.multiHandedness[i].label;
-          }
+    if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+      setHandState(true);
 
-          // Draw landmarks
-          drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS,
-            { color: '#22c55e', lineWidth: 3 });
-          drawLandmarks(canvasCtx, landmarks,
-            { color: '#f97316', lineWidth: 1 });
+      for (let i = 0; i < results.multiHandLandmarks.length; i++) {
+        const landmarks = results.multiHandLandmarks[i];
 
-          // Compute finger states
-          const states = getFingerStates(landmarks, handednessLabel);
-          const binaryString = states.join('');
-          binaryDisplay.textContent = binaryString;
-
-          // Send to ESP32 (debounced)
-          sendGestureToESP32(binaryString);
+        // Read handedness from MediaPipe (Left / Right)
+        let handednessLabel = "Right";
+        if (
+          results.multiHandedness &&
+          results.multiHandedness[i] &&
+          results.multiHandedness[i].label
+        ) {
+          handednessLabel = results.multiHandedness[i].label;
         }
-      } else {
-        setHandState(false);
-        binaryDisplay.textContent = '00000';
-      }
 
-      canvasCtx.restore();
+        // Draw landmarks
+        drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS,
+          { color: '#22c55e', lineWidth: 3 });
+        drawLandmarks(canvasCtx, landmarks,
+          { color: '#f97316', lineWidth: 1 });
+
+        // Compute finger states
+        const states = getFingerStates(landmarks, handednessLabel);
+        const binaryString = states.join('');
+        binaryDisplay.textContent = binaryString;
+
+        // Send to ESP32 (debounced)
+        sendGestureToESP32(binaryString);
+      }
+    } else {
+      setHandState(false);
+      binaryDisplay.textContent = '00000';
     }
 
-    // === Setup MediaPipe Hands ===
-    const hands = new Hands({
-      locateFile: (file) => {
-        return `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/${file}`;
-      }
+    canvasCtx.restore();
+  }
+
+  // === Setup MediaPipe Hands ===
+  const hands = new Hands({
+    locateFile: (file) => {
+      return `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/${file}`;
+    }
+  });
+
+  hands.setOptions({
+    selfieMode: true,
+    maxNumHands: 1,
+    modelComplexity: 1,
+    minDetectionConfidence: 0.7,
+    minTrackingConfidence: 0.7
+  });
+
+  hands.onResults(onResults);
+
+  // === Setup camera (only via MediaPipe Camera helper) ===
+  const camera = new Camera(videoElement, {
+    onFrame: async () => {
+      await hands.send({ image: videoElement });
+    },
+    width: 960,
+    height: 540
+  });
+
+  // Start camera directly – Camera() will internally ask for getUserMedia
+  camera.start()
+    .then(() => {
+      setCameraState(true, 'Camera: OK');
+    })
+    .catch(err => {
+      console.error('Camera error', err);
+      setCameraState(false, 'Camera: permission denied or not available');
     });
+</script>
 
-    hands.setOptions({
-      selfieMode: true,
-      maxNumHands: 1,
-      modelComplexity: 1,
-      minDetectionConfidence: 0.7,
-      minTrackingConfidence: 0.7
-    });
-
-    hands.onResults(onResults);
-
-    // === Setup camera ===
-    const camera = new Camera(videoElement, {
-      onFrame: async () => {
-        await hands.send({ image: videoElement });
-      },
-      width: 960,
-      height: 540
-    });
-
-    navigator.mediaDevices.getUserMedia({ video: true })
-      .then(stream => {
-        setCameraState(true, 'Camera: OK');
-        stream.getTracks().forEach(track => track.stop()); // just to confirm access
-        camera.start();
-      })
-      .catch(err => {
-        console.error('Camera error', err);
-        setCameraState(false, 'Camera: permission denied or not available');
-      });
-  </script>
 </body>
 </html>
