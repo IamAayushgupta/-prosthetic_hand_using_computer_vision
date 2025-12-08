@@ -316,8 +316,8 @@
       lastSentState = binaryString;
       lastSentTime = now;
     } catch (err) {
-      console.error('Error sending to ESP32:', err);
-      esp32Status.textContent = 'Error talking to ESP32 (check IP / Wi-Fi / CORS).';
+      // console.error('Error sending to ESP32:', err);
+      // esp32Status.textContent = 'Error talking to ESP32 (check IP / Wi-Fi / CORS).';
     }
   }
 
@@ -414,4 +414,5 @@
 
 </body>
 </html>
+
 
